@@ -1,0 +1,777 @@
+---
+title: "Untitled"
+author: "Nicholas Torsky, ntorsky"
+date: "11/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) 
+library(Lahman) 
+library(arm)
+library(gridExtra)
+library(plotly)
+library(caret)
+library(InformationValue)
+
+# Set seed for reproducible results
+set.seed(1827) 
+  
+# Import Lahman Tables 
+data("Batting") 
+data("HallOfFame") 
+data("Fielding") 
+data("People")
+
+# Retrieve player names based on playerID
+People$names <- paste(People$nameFirst, People$nameLast, sep = " ")
+
+# Save vector of acceptable election types
+vote <- c("BBWAA", "Special Election", "Run Off")
+
+# Subset all inducted Hall of Famers, regardless of election type
+allHall <- filter(HallOfFame, inducted == 'Y') %>% dplyr::select(playerID)
+
+# Subset Hall of Famers by accpetable election type, selecting only playerID
+HOFers <- filter(HallOfFame, inducted == 'Y', category == 'Player') %>% 
+  dplyr::select(playerID)
+
+# Select the primary position of each Hall of Fame player, filtering out pitchers and players with
+# less than 200 games played
+HOF_field <- Fielding[Fielding$playerID %in% HOFers$playerID,] %>% 
+  dplyr::select(playerID, POS, G) %>% 
+  filter(POS != 'P') %>% 
+  group_by(playerID, POS) %>% 
+  summarize_all(funs(sum)) %>% 
+  group_by(playerID) %>% 
+  top_n(1, G) %>% 
+  filter(G > 200) %>% 
+  dplyr::select(-c(G)) 
+
+# Select batting statistics for all players in HOF_field                                                               
+HOF <- Batting[Batting$playerID %in% HOF_field$playerID,] %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  dplyr::select(-c(stint, teamID, lgID)) %>% 
+  group_by(playerID, yearID) %>% 
+  summarize_all(funs(sum)) %>%
+  mutate(years = 1) %>%
+  group_by(playerID) %>%
+  summarize_all(funs(sum)) %>%
+  dplyr::select(-c(yearID))
+
+# Merge names and positions to batting statistics and calculate rate statistics
+# Also, filtering Hall of Famers by >10 year careers (HOF election criteria)
+HOF <- HOF %>% 
+  merge(HOF_field, by = 'playerID') %>% 
+  merge(People[,c("playerID", "names")], by = "playerID") %>%
+  battingStats(idvars = c("playerID"), cbind=TRUE) %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  filter(years >= 10)
+   
+# Adding HOF induction as column
+HOF <- HOF %>%
+  mutate(inducted = 1)
+
+### THE FOLLOWING CODE PERFORMS THE SAME OPERATIONS AS FOR HALL OF FAMERS ABOVE
+### BUT FOR ALL NON-INDUCTED BATTERS
+nonHOF_field <- Fielding[!(Fielding$playerID %in% allHall$playerID),] %>% 
+  dplyr::select(playerID, POS, G) %>% 
+  filter(POS != 'P') %>% 
+  group_by(playerID, POS) %>% 
+  summarize_all(funs(sum)) %>% 
+  group_by(playerID) %>% 
+  top_n(1, G) %>% 
+  filter(G > 200) %>% 
+  dplyr::select(-c(G))
+nonHOF <- Batting[!(Batting$playerID %in% HOF_field$playerID),] %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  dplyr::select(-c(stint, teamID, lgID)) %>% 
+  group_by(playerID, yearID) %>%
+  summarize_all(funs(sum)) %>%
+  mutate(years = 1) %>%
+  group_by(playerID) %>%
+  summarize_all(funs(sum)) %>%
+  filter(years >= 10) %>%
+  dplyr::select(-c(yearID))
+nonHOF <- nonHOF %>% 
+  merge(nonHOF_field, by = 'playerID') %>% 
+  merge(People[,c("playerID", "names")], by = "playerID") %>%
+  battingStats(idvars = c("playerID"), cbind=TRUE) %>% 
+  mutate_all(~replace(., is.na(.), 0)) 
+  
+nonHOF <- nonHOF %>%
+  mutate(inducted = 0)
+
+# Combine inductees and non-inductees into one table and converting "inducted" variable
+# to factor type
+all_batters <- rbind(HOF, nonHOF)
+all_batters$inducted <- factor(all_batters$inducted)
+summary(all_batters)
+```
+
+```{r}
+# This code block provides density plots for all features and plots them together
+p1 <- ggplot(data = all_batters, aes(x = G, color = inducted)) + geom_density() + theme(legend.position = "none")
+p2 <- ggplot(data = all_batters, aes(x = AB, color = inducted)) + geom_density() + theme(legend.position = "none")
+p3 <- ggplot(data = all_batters, aes(x = R, color = inducted)) + geom_density() + theme(legend.position = "none")
+p4 <- ggplot(data = all_batters, aes(x = H, color = inducted)) + geom_density() + theme(legend.position = "none")
+p5 <- ggplot(data = all_batters, aes(x = X2B, color = inducted)) + geom_density() + theme(legend.position = "none")
+p6 <- ggplot(data = all_batters, aes(x = X3B, color = inducted)) + geom_density() + theme(legend.position = "none")
+p7 <- ggplot(data = all_batters, aes(x = HR, color = inducted)) + geom_density() + theme(legend.position = "none")
+p8 <- ggplot(data = all_batters, aes(x = RBI, color = inducted)) + geom_density() + theme(legend.position = "none")
+p9 <- ggplot(data = all_batters, aes(x = SB, color = inducted)) + geom_density() + theme(legend.position = "none")
+p10 <- ggplot(data = all_batters, aes(x = CS, color = inducted)) + geom_density() + theme(legend.position = "none")
+p11 <- ggplot(data = all_batters, aes(x = BB, color = inducted)) + geom_density() + theme(legend.position = "none")
+p12 <- ggplot(data = all_batters, aes(x = SO, color = inducted)) + geom_density() + theme(legend.position = "none")
+p13 <- ggplot(data = all_batters, aes(x = IBB, color = inducted)) + geom_density() + theme(legend.position = "none")
+p14 <- ggplot(data = all_batters, aes(x = HBP, color = inducted)) + geom_density() + theme(legend.position = "none")
+p15 <- ggplot(data = all_batters, aes(x = SH, color = inducted)) + geom_density() + theme(legend.position = "none")
+p16 <- ggplot(data = all_batters, aes(x = SF, color = inducted)) + geom_density() + theme(legend.position = "none")
+p17 <- ggplot(data = all_batters, aes(x = GIDP, color = inducted)) + geom_density() + theme(legend.position = "none")
+p18 <- ggplot(data = all_batters, aes(x = PA, color = inducted)) + geom_density() + theme(legend.position = "none")
+p19 <- ggplot(data = all_batters, aes(x = TB, color = inducted)) + geom_density() + theme(legend.position = "none")
+p20 <- ggplot(data = all_batters, aes(x = BA, color = inducted)) + geom_density() + theme(legend.position = "none")
+p21 <- ggplot(data = all_batters, aes(x = OBP, color = inducted)) + geom_density() + theme(legend.position = "none")
+p22 <- ggplot(data = all_batters, aes(x = SlugPct, color = inducted)) + geom_density() + theme(legend.position = "none")
+p23 <- ggplot(data = all_batters, aes(x = OPS, color = inducted)) + geom_density() + theme(legend.position = "none")
+p24 <- ggplot(data = all_batters, aes(x = BABIP, color = inducted)) + geom_density() + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12,
+             p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24,
+             nrow = 4)
+```
+
+```{r}
+# Remove unwanted predictors
+all_batters <- all_batters %>%
+  dplyr::select(-c(SB, CS, SO, IBB, SF, SH, HBP, GIDP, BABIP, X3B))
+
+# Remove and save columns that will not be transformed on the logarithmic scale
+keep_these <- all_batters %>%
+  dplyr::select(playerID, names, POS, years, BA, OBP, SlugPct, OPS, inducted)
+
+# Logarithmic transformation and rebinding with removed columns
+log_all_batters <- all_batters %>%
+  dplyr::select(-c(playerID, names, POS, years, BA, OBP, SlugPct, OPS, inducted)) %>%
+  log() %>%
+  cbind(keep_these) %>%
+  dplyr::select(playerID, names, POS, years, R:TB, BA:inducted)
+log_all_batters$HR[which(!is.finite(log_all_batters$HR))] <- 0
+
+# Final log-transformed data frame for use in algorithm
+logs_for_test <- log_all_batters %>% dplyr::select(-c(playerID, names, POS))
+
+# Subset log-transformed data frame by position
+logs_C <- subset(log_all_batters, POS == 'C') %>% dplyr::select(-c(playerID, names, POS))
+logs_1B <- subset(log_all_batters, POS == '1B') %>% dplyr::select(-c(playerID, names, POS))
+logs_2B <- subset(log_all_batters, POS == '2B') %>% dplyr::select(-c(playerID, names, POS))
+logs_3B <- subset(log_all_batters, POS == '3B') %>% dplyr::select(-c(playerID, names, POS))
+logs_SS <- subset(log_all_batters, POS == 'SS') %>% dplyr::select(-c(playerID, names, POS))
+logs_OF <- subset(log_all_batters, POS == 'OF') %>% dplyr::select(-c(playerID, names, POS))
+
+# Percentage of the dataset inducted into Hall
+tab <- table(logs_for_test$inducted)
+hall_pct <- tab[2] / (tab[1] + tab[2])
+
+# Initialize accuracy and predicted value vectors for four models
+acc_LOOCV1 <- numeric(nrow(logs_for_test))
+acc_LOOCV2 <- numeric(nrow(logs_for_test))
+acc_BLog1 <- numeric(nrow(logs_for_test))
+acc_BLog2 <- numeric(nrow(logs_for_test))
+m1 <- numeric(nrow(logs_for_test))
+m2 <- numeric(nrow(logs_for_test))
+m3 <- numeric(nrow(logs_for_test))
+m4 <- numeric(nrow(logs_for_test))
+
+# For loop performing LOOCV
+for (i in 1:nrow(logs_for_test)){
+  train <- logs_for_test[-i,]
+  test <- logs_for_test[i,]
+  
+  actual <- test$inducted
+  
+  model1 <- glm(inducted ~ years + R + H + X2B + HR + RBI + BA + OPS,
+                      data = train[,-c(7:9,11:12)],
+                      family = binomial(link = "logit"))
+  probs1 <- predict(model1, test, type = "response")
+  m1[i] <- probs1
+  results1 <- ifelse(probs1 > 0.5, 1, 0)
+  MCE1 <- ifelse(actual == results1, 1, 0)
+  acc_LOOCV1[i] <- MCE1
+  prior_means_all_1 <- as.numeric(coef(model1)[2:9])
+  prior_sds_all_1 <- as.numeric(se.coef(model1)[2:9])
+  
+  model2 <- glm(inducted ~.,
+               data = train[,-c(13)],
+               family = binomial())
+  probs2 <- predict(model2, test, type = "response")
+  m2[i] <- probs2
+  results2 <- ifelse(probs2 > 0.5, 1, 0)
+  MCE2 <- ifelse(actual == results2, 1, 0)
+  acc_LOOCV2[i] <- MCE2
+  prior_means_all_2 <- as.numeric(coef(model2)[2:13])
+  prior_sds_all_2 <- as.numeric(se.coef(model2)[2:13])
+  
+  model3 <- bayesglm(inducted ~ years + R + H + X2B + HR + RBI + BA + OPS,
+                         data = train[,-c(7:9,11:12)],
+                         family = binomial(link = "logit"),
+                         prior.mean = prior_means_all_1,
+                         prior.scale = prior_sds_all_1,
+                         prior.df = Inf,
+                         prior.mean.for.intercept = as.numeric(coef(model1)[1]),
+                         prior.scale.for.intercept = as.numeric(se.coef(model1)[1]),
+                         prior.df.for.intercept = Inf)
+  probs3 <- predict(model3, test, type = "response")
+  m3[i] <- probs3
+  results3 <- ifelse(probs3 > 0.5, 1, 0)
+  MCE3 <- ifelse(actual == results3, 1, 0)
+  acc_BLog1[i] <- MCE3
+  
+  model4 <- bayesglm(inducted ~ .,
+                            data = train[,-c(13)],
+                            family = binomial(link = "logit"),
+                            prior.mean = prior_means_all_2,
+                            prior.scale = prior_sds_all_2,
+                            prior.df = Inf,
+                         prior.mean.for.intercept = as.numeric(coef(model2)[1]),
+                         prior.scale.for.intercept = as.numeric(se.coef(model2)[1]),
+                         prior.df.for.intercept = Inf)
+  probs4 <- predict(model4, test, type = "response")
+  m4[i] <- probs4
+  results4 <- ifelse(probs4 > 0.5, 1, 0)
+  MCE4 <- ifelse(actual == results4, 1, 0)
+  acc_BLog2[i] <- MCE4
+}
+
+# Misclassification errors for each model
+m1_oospe <- mean(acc_LOOCV1)
+m2_oospe <- mean(acc_LOOCV2)
+m3_oospe <- mean(acc_BLog1)
+m4_oospe <- mean(acc_BLog2)
+
+# Optimal Cutoff values for each model
+optCut1 <- optimalCutoff(all_batters$inducted, m1, optimiseFor = "misclasserror")
+optCut2 <- optimalCutoff(all_batters$inducted, m2, optimiseFor = "misclasserror")
+optCut3 <- optimalCutoff(all_batters$inducted, m3, optimiseFor = "misclasserror")
+optCut4 <- optimalCutoff(all_batters$inducted, m4, optimiseFor = "misclasserror")
+
+# Model 1 TPR, FPR, and Lift
+TPR1_a <- all_batters %>%
+  filter(inducted == 1 & m1 > optCut1)
+TPR1_b <- all_batters %>%
+  filter(inducted == 1 & m1 <= optCut1)
+TPR1_c <- all_batters %>%
+  filter(inducted == 0 & m1 > optCut1)
+TPR1_d <- all_batters %>%
+  filter(inducted == 0 & m1 <= optCut1)
+TPR1 <- nrow(TPR1_a) / (nrow(TPR1_a) + nrow(TPR1_b))
+FPR1 <- nrow(TPR1_c) / (nrow(TPR1_c) + nrow(TPR1_d))
+lift1_pos <- TPR1 / ((nrow(TPR1_a) + nrow(TPR1_c)) / (nrow(all_batters)))
+
+# Model 2 TPR, FPR, and Lift
+TPR2_a <- all_batters %>%
+  filter(inducted == 1 & m2 > optCut2)
+TPR2_b <- all_batters %>%
+  filter(inducted == 1 & m2 <= optCut2)
+TPR2_c <- all_batters %>%
+  filter(inducted == 0 & m2 > optCut2)
+TPR2_d <- all_batters %>%
+  filter(inducted == 0 & m2 <= optCut2)
+TPR2 <- nrow(TPR2_a) / (nrow(TPR2_a) + nrow(TPR2_b))
+FPR2 <- nrow(TPR2_c) / (nrow(TPR2_c) + nrow(TPR2_d))
+lift2_pos <- TPR2 / ((nrow(TPR2_a) + nrow(TPR2_c)) / (nrow(all_batters)))
+
+# Model 3 TPR, FPR, and Lift
+TPR3_a <- all_batters %>%
+  filter(inducted == 1 & m3 > optCut3)
+TPR3_b <- all_batters %>%
+  filter(inducted == 1 & m3 <= optCut3)
+TPR3_c <- all_batters %>%
+  filter(inducted == 0 & m3 > optCut3)
+TPR3_d <- all_batters %>%
+  filter(inducted == 0 & m3 <= optCut3)
+TPR3 <- nrow(TPR3_a) / (nrow(TPR3_a) + nrow(TPR3_b))
+FPR3 <- nrow(TPR3_c) / (nrow(TPR3_c) + nrow(TPR3_d))
+lift3_pos <- TPR3 / ((nrow(TPR3_a) + nrow(TPR3_c)) / (nrow(all_batters)))
+
+# Model 4 TPR, FPR, and Lift
+TPR4_a <- all_batters %>%
+  filter(inducted == 1 & m4 > optCut4)
+TPR4_b <- all_batters %>%
+  filter(inducted == 1 & m4 <= optCut4)
+TPR4_c <- all_batters %>%
+  filter(inducted == 0 & m4 > optCut4)
+TPR4_d <- all_batters %>%
+  filter(inducted == 0 & m4 <= optCut4)
+TPR4 <- nrow(TPR4_a) / (nrow(TPR4_a) + nrow(TPR4_b))
+FPR4 <- nrow(TPR4_c) / (nrow(TPR4_c) + nrow(TPR4_d))
+lift4_pos <- TPR4 / ((nrow(TPR4_a) + nrow(TPR4_c)) / (nrow(all_batters)))
+
+# Binding predicted scores to complete table
+all_batters <- cbind(all_batters, m1, m2, m3, m4)
+
+# Data frame of non-inducted players whose prediction scores were above the cutoff
+HOF_worthy <- all_batters %>%
+  filter(inducted == 0 & (m1 > optCut1 | m2 > optCut2 | m3 > optCut3 | m4 > optCut4))
+
+# Data frame of inducted players whose prediction scores were below the cutoff
+false_positives <- all_batters %>%
+  filter(inducted == 1 & (m1 <= optCut1 & m2 <= optCut2 & m3 <= optCut3 & m4 <= optCut4))
+```
+
+```{r}
+# This code block provides smoothed logistic regression functions for each predictor 
+# and plots them together
+a1 <- ggplot(all_batters, aes(x=G, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a2 <- ggplot(all_batters, aes(x=PA, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a3 <- ggplot(all_batters, aes(x=AB, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a4 <- ggplot(all_batters, aes(x=R, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a5 <- ggplot(all_batters, aes(x=H, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a6 <- ggplot(all_batters, aes(x=X2B, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a7 <- ggplot(all_batters, aes(x=HR, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a8 <- ggplot(all_batters, aes(x=RBI, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a9 <- ggplot(all_batters, aes(x=BB, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a10 <- ggplot(all_batters, aes(x=BA, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a11 <- ggplot(all_batters, aes(x=OBP, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a12 <- ggplot(all_batters, aes(x=SlugPct, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a13 <- ggplot(all_batters, aes(x=OPS, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a14 <- ggplot(all_batters, aes(x=TB, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+a15 <- ggplot(all_batters, aes(x=years, y=as.numeric(inducted)-1)) + 
+  geom_point() + 
+  stat_smooth(method="glm", se=F, fullrange=T, method.args = list(family=binomial)) + 
+  theme(axis.title.y  = element_blank())
+
+grid.arrange(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, nrow = 5)
+```
+
+```{r}
+# Subset full data frame, including prediction scores, by position
+all_C <- subset(all_batters, POS == 'C') 
+all_1B <- subset(all_batters, POS == '1B')
+all_2B <- subset(all_batters, POS == '2B') 
+all_3B <- subset(all_batters, POS == '3B') 
+all_SS <- subset(all_batters, POS == 'SS') 
+all_OF <- subset(all_batters, POS == 'OF')
+```
+
+```{r}
+# This code block provides logistic regression models by position
+
+# Catcher
+run_C <- numeric(nrow(logs_C))
+count_C <- 0
+for (j in 1:(ncol(logs_C)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_C)){
+    train <- logs_C[-i,c(j,14)]
+    test <- logs_C[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_C <- run_C + preds
+    count_C <- count_C + 1
+  }
+}
+scores_C <- run_C / count_C
+all_C <- cbind(all_C, scores_C) 
+
+# 1st Base
+run_1B <- numeric(nrow(logs_1B))
+count_1B <- 0
+for (j in 1:(ncol(logs_1B)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_1B)){
+    train <- logs_1B[-i,c(j,14)]
+    test <- logs_1B[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_1B <- run_1B + preds
+    count_1B <- count_1B + 1
+  }
+}
+scores_1B <- run_1B / count_1B
+all_1B <- cbind(all_1B, scores_1B)
+
+# 2nd Base
+run_2B <- numeric(nrow(logs_2B))
+count_2B <- 0
+for (j in 1:(ncol(logs_2B)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_2B)){
+    train <- logs_2B[-i,c(j,14)]
+    test <- logs_2B[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_2B <- run_2B + preds
+    count_2B <- count_2B + 1
+  }
+}
+scores_2B <- run_2B / count_2B
+all_2B <- cbind(all_2B, scores_2B)
+
+# 3rd Base
+run_3B <- numeric(nrow(logs_3B))
+count_3B <- 0
+for (j in 1:(ncol(logs_3B)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_3B)){
+    train <- logs_3B[-i,c(j,14)]
+    test <- logs_3B[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_3B <- run_3B + preds
+    count_3B <- count_3B + 1
+  }
+}
+scores_3B <- run_3B / count_3B
+all_3B <- cbind(all_3B, scores_3B)
+
+# Shortstop
+run_SS <- numeric(nrow(logs_SS))
+count_SS <- 0
+for (j in 1:(ncol(logs_SS)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_SS)){
+    train <- logs_SS[-i,c(j,14)]
+    test <- logs_SS[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_SS <- run_SS + preds
+    count_SS <- count_SS + 1
+  }
+}
+scores_SS <- run_SS / count_SS
+all_SS <- cbind(all_SS, scores_SS)
+
+# Outfield
+run_OF <- numeric(nrow(logs_OF))
+count_OF <- 0
+for (j in 1:(ncol(logs_OF)-1)){
+  acc_LOOCV <- NULL
+  preds <- NULL
+  for (i in 1:nrow(logs_OF)){
+    train <- logs_OF[-i,c(j,14)]
+    test <- logs_OF[i,c(j,14)]
+    
+    model <- glm(inducted ~ .,
+                 data = train,
+                 family = binomial())
+    prob <- predict(model, test, type = "response")
+    result <- ifelse(prob > 0.5, 1, 0)
+    actual <- test$inducted
+    MCE <- ifelse(actual == result, 1, 0)
+    preds[i] <- prob
+    acc_LOOCV[i] <- MCE
+  }
+  if (mean(acc_LOOCV) >= 0.9){
+    run_OF <- run_OF + preds
+    count_OF <- count_OF + 1
+  }
+}
+scores_OF <- run_OF / count_OF
+all_OF <- cbind(all_OF, scores_OF)
+```
+
+```{r}
+# Rename position scores for each position for the same thing for binding purposes
+# Add column describing the difference between each player's positional score and the 
+# mean score at that position
+all_C <- rename(all_C, c("scores" = "scores_C")) %>% mutate(over_mean = scores - mean(scores))
+all_1B <- rename(all_1B, c("scores" = "scores_1B")) %>% mutate(over_mean = scores - mean(scores))
+all_2B <- rename(all_2B, c("scores" = "scores_2B")) %>% mutate(over_mean = scores - mean(scores))
+all_3B <- rename(all_3B, c("scores" = "scores_3B")) %>% mutate(over_mean = scores - mean(scores))
+all_SS <- rename(all_SS, c("scores" = "scores_SS")) %>% mutate(over_mean = scores - mean(scores))
+all_OF <- rename(all_OF, c("scores" = "scores_OF")) %>% mutate(over_mean = scores - mean(scores))
+
+# Percentages of Hall of Fame inductees at each position
+hall_pct_C <- table(all_C$inducted)[2] / (table(all_C$inducted)[1] + table(all_C$inducted)[2])
+hall_pct_1B <- table(all_1B$inducted)[2] / (table(all_1B$inducted)[1] + table(all_1B$inducted)[2])
+hall_pct_2B <- table(all_2B$inducted)[2] / (table(all_2B$inducted)[1] + table(all_2B$inducted)[2])
+hall_pct_3B <- table(all_3B$inducted)[2] / (table(all_3B$inducted)[1] + table(all_3B$inducted)[2])
+hall_pct_SS <- table(all_SS$inducted)[2] / (table(all_SS$inducted)[1] + table(all_SS$inducted)[2])
+hall_pct_OF <- table(all_OF$inducted)[2] / (table(all_OF$inducted)[1] + table(all_OF$inducted)[2])
+
+# Data frame containing top n precent of prediction scores at each position
+top_15 <- rbind(slice_max(all_C, order_by = scores, n = hall_pct_C * nrow(all_C)),
+                slice_max(all_1B, order_by = scores, n = hall_pct_1B * nrow(all_1B)),
+                slice_max(all_2B, order_by = scores, n = hall_pct_2B * nrow(all_2B)),
+                slice_max(all_3B, order_by = scores, n = hall_pct_3B * nrow(all_3B)),
+                slice_max(all_SS, order_by = scores, n = hall_pct_SS * nrow(all_SS)),
+                slice_max(all_OF, order_by = scores, n = hall_pct_OF * nrow(all_OF)))
+
+# Data frame containing players in top n percent of prediction scores at each position
+# who do not appear in HOF_worthy table
+pos_only <- top_15[!(top_15$playerID %in% HOF_worthy$playerID),] %>% filter(inducted == 0)
+
+# Amending false_positives to omit players in the top n percent of prediction scores at 
+# their position
+false_positives <- false_positives[!(false_positives$playerID %in% top_15$playerID),]
+
+# Data frame describing players who might be voted for by a "small Hall" voter
+small_hall <- all_batters %>%
+  filter(inducted == 0 & (m1 > 0.5 | m2 > 0.5 | m3 > 0.5 | m4 > 0.5))
+
+# Data frame describing players who might be voted for by a "large Hall" voter
+large_hall_pos <- pos_only %>%
+  filter(over_mean > 0.2)
+large_hall <- all_batters %>%
+  filter(inducted == 0 & (m1 > 0.2 | m2 > 0.2 | m3 > 0.2 | m4 > 0.2)) %>%
+  rbind(all_batters[all_batters$playerID %in% large_hall_pos$playerID,])
+large_hall <- large_hall[!duplicated(large_hall),]
+```
+
+```{r}
+# Mean values for each predictor and model score among Hall of Famers
+HOF_avg <- all_batters[all_batters$playerID %in% HOF$playerID,] %>%
+  dplyr::select(years, G:BB, BA:OPS, m1:m4) %>%
+  colMeans()
+HOF_avg <- c("HOF Average", HOF_avg) %>% t() %>% as.data.frame() %>% rename(c("names" = "V1"))
+```
+
+```{r}
+# This code block exists solely to create the tables used in the printed version of the report
+# Tables are numbered here in the same way as they appear in the report
+table2_names <- c("cabremi01", 
+                   "pujolal01")
+table2 <- all_batters[all_batters$playerID %in% table2_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table2 <- rbind(table2, HOF_avg)
+write.csv(table2, file = "table2.csv")
+
+table3_names <- c("daubeja01",
+                  "doyleja01",
+                  "judgejo01",
+                  "brodist01",
+                  "childcu01",
+                  "cramedo01",
+                  "crossla01",
+                  "dahlebi01",
+                  "donovpa01",
+                  "gardnla01",
+                  "jacksjo01",
+                  "mcinnst01",
+                  "mckeaed01",
+                  "myerbu01",
+                  "ryanji01",
+                  "tennefr02",
+                  "tiernmi01",
+                  "vanhage01",
+                  "veachbo01")
+table3 <- all_batters[all_batters$playerID %in% table3_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table3 <- rbind(table3, HOF_avg)
+write.csv(table3, file = "table3.csv")
+
+table4_names <- c("ortizda01",
+                  "bondsba01",
+                  "palmera01",
+                  "ramirma02",
+                  "rodrial01",
+                  "sheffga01",
+                  "sosasa01")
+table4 <- all_batters[all_batters$playerID %in% table4_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table4 <- rbind(table4, HOF_avg)
+write.csv(table4, file = "table4.csv")
+
+table5_names <- c("ortizda01",
+                  "martied01")
+table5 <- all_batters[all_batters$playerID %in% table5_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table5 <- rbind(table5, HOF_avg)
+write.csv(table5, file = "table5.csv")
+
+table6_names <- c("willite01",
+                  "bondsba01",
+                  "mayswi0101",
+                  "ruthba01",
+                  "rodrial01",
+                  "musiast01")
+table6 <- all_batters[all_batters$playerID %in% table6_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+write.csv(table6, file = "table6.csv")
+
+table7_names <- c("beltrad01",
+                  "beltrca01",
+                  "suzukic01")
+table7 <- all_batters[all_batters$playerID %in% table7_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table7 <- rbind(table7, HOF_avg)
+write.csv(table7, file = "table7.csv")
+
+table8_names <- c("suzukic01",
+                  "cobbty01",
+                  "delahed01",
+                  "hornsro01",
+                  "hamilbi01")
+table8 <- all_batters[all_batters$playerID %in% table8_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+write.csv(table8, file = "table8.csv")
+
+table9_names <- c("heltoto01",
+                  "abreubo01",
+                  "vizquom01")
+table9 <- all_batters[all_batters$playerID %in% table9_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table9 <- rbind(table9, HOF_avg)
+write.csv(table9, file = "table9.csv")
+
+table10_names <- c("beltrca01",
+                  "abreubo01")
+table10 <- all_batters[all_batters$playerID %in% table10_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table10 <- rbind(table10, HOF_avg)
+write.csv(table10, file = "table10.csv")
+
+table11_names <- c("francju01",
+                  "mcgrifr01",
+                  "oliveal01",
+                  "parkeda01",
+                  "staubru01")
+table11 <- all_batters[all_batters$playerID %in% table11_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table11 <- rbind(table11, HOF_avg)
+write.csv(table11, file = "table11.csv")
+
+table12_names <- c("francju01",
+                  "trammal01",
+                  "larkiba01",
+                  "smithoz01")
+table12 <- all_batters[all_batters$playerID %in% table12_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+write.csv(table12, file = "table12.csv")
+
+table13_names <- c("puckeki01",
+                  "kinerra01")
+table13 <- all_batters[all_batters$playerID %in% table13_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table13 <- rbind(table13, HOF_avg)
+write.csv(table13, file = "table13.csv")
+
+table14_names <- c("cepedor01",
+                  "santoro01")
+table14 <- all_batters[all_batters$playerID %in% table14_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table14 <- rbind(table14, HOF_avg)
+write.csv(table14, file = "table14.csv")
+
+table15_names <- c("kellge01")
+table15 <- all_batters[all_batters$playerID %in% table15_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table15 <- rbind(table15, HOF_avg)
+write.csv(table15, file = "table15.csv")
+
+table16_names <- c("kentje01",
+                  "canoro01",
+                  "mauerjo01",
+                  "gonzalu01",
+                  "evansdw01",
+                  "mcgwima01",
+                  "damonjo01",
+                  "rolliji01",
+                  "giambja01",
+                  "utleych01",
+                  "willibe02")
+table16 <- all_batters[all_batters$playerID %in% table16_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table16 <- rbind(table16, HOF_avg)
+write.csv(table16, file = "table16.csv")
+
+table17_names <- c("rosepe01")
+table17 <- all_batters[all_batters$playerID %in% table17_names,] %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4)
+table17 <- rbind(table17, HOF_avg)
+write.csv(table17, file = "table17.csv")
+```
+
+```{r}
+# This code block contains CSV outputs for extra tables not mentioned in the report,
+# but may be of interest
+worthy_vs_avg <- HOF_worthy %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4) %>% rbind(HOF_avg)
+write.csv(worthy_vs_avg, file = "worthy_vs_avg.csv")
+
+false_pos_vs_average <- false_positives %>% dplyr::select(names, years, G:BB, BA:OPS, m1:m4) %>% rbind(HOF_avg)
+write.csv(false_pos_vs_average, file = "false_pos_vs_average.csv")
+```
